@@ -34,7 +34,7 @@ services:
     disk:
       name: hermes-data
       mountPath: /opt/data
-      sizeGB: 5
+      sizeGB: 40
 
     envVars:
       # The Blueprint only carries vars that change how the container boots
