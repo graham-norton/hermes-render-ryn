@@ -63,6 +63,10 @@ RUN curl -fsSL --retry 3 -o /usr/local/bin/cloudflared \
  && chmod 0755 /usr/local/bin/cloudflared \
  && cloudflared --version
 
+# Put the Hermes CLI on PATH so `hermes` works in Render Shell / SSH
+# sessions. Skipped if the upstream image already provides one there.
+RUN [ -e /usr/local/bin/hermes ] || ln -s /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes
+
 # Boot-time wrapper: patches /opt/data/config.yaml, then hands off to
 # the upstream entrypoint chain (tini → docker/entrypoint.sh).
 COPY --chown=root:root scripts/bootstrap.sh /opt/render-tools/bootstrap.sh

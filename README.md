@@ -172,7 +172,7 @@ If you'd rather stay on the command line, two paths work, both because the in-co
 - **One-shot prompts via Render Shell or SSH.** The browser shell on Render does not allocate a TTY for `runtime: image` services. The interactive REPL (`hermes` with no args) will print a banner and quit immediately with `Warning: Input is not a terminal (fd=0)`. Use the non-interactive form instead:
 
   ```bash
-  /opt/hermes/.venv/bin/hermes chat -q "summarize today's logs"
+  hermes chat -q "summarize today's logs"
   ```
 
   This runs one turn, prints the result, and exits cleanly. You can chain it with `--resume <session-id>` to continue an existing conversation.
@@ -181,7 +181,7 @@ If you'd rather stay on the command line, two paths work, both because the in-co
 
   ```bash
   render ssh <service-id>
-  /opt/hermes/.venv/bin/hermes
+  hermes
   ```
 
   `render ssh` allocates a PTY, so the interactive REPL works.
@@ -247,8 +247,8 @@ ls /opt/data
 cat /opt/data/.env
 
 # Run the Hermes CLI directly.
-/opt/hermes/.venv/bin/hermes status
-/opt/hermes/.venv/bin/hermes config get model.default
+hermes status
+hermes config get model.default
 ```
 
 The container runs as the `hermes` user (UID 10000), not root.
