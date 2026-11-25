@@ -121,7 +121,7 @@ You don't need any optional keys to deploy. You can fill them in via the Render 
 The Hermes dashboard has no built-in authentication, so this Blueprint never exposes it publicly. The service is a background worker (no `.onrender.com` URL), the dashboard binds to `127.0.0.1:10000`, and a baked-in `cloudflared` carries it out over an outbound-only tunnel. You need a domain whose DNS is on Cloudflare.
 
 1. In [Cloudflare Zero Trust](https://one.dash.cloudflare.com), go to **Networks** → **Tunnels** and create a `cloudflared` tunnel. Copy its token; this is `TUNNEL_TOKEN`. Ignore the install commands Cloudflare shows: the image already contains `cloudflared`, and the bootstrap runs it.
-2. On the tunnel, add a **public hostname** (for example `hermes.example.com`) with service `http://localhost:10000`.
+2. On the tunnel, add a **public hostname** (for example `hermes.example.com`) with service `http://localhost:10000`. Under **Additional application settings** → **HTTP Settings**, set **HTTP Host Header** to `localhost`. The dashboard rejects any Host header that isn't a loopback name (its DNS-rebinding defence), so without this you'll see `Invalid Host header`.
 3. Under **Access** → **Applications**, add a self-hosted application for that hostname with an **Allow** policy for your own email or identity provider group. **Do not skip this.** Without it, anyone who finds the hostname can read your keys and drive the agent.
 4. Set `TUNNEL_TOKEN` in the service's **Environment** tab, if you didn't paste it during deploy.
 
@@ -262,6 +262,7 @@ Check the **Events** tab for the deploy that failed, then the **Logs** tab aroun
 | `Refusing to start: binding to 0.0.0.0 requires API_SERVER_KEY` | You set `API_SERVER_ENABLED=true` and `API_SERVER_HOST=0.0.0.0` without an `API_SERVER_KEY`. Set the key or flip back to `127.0.0.1`. |
 | `TUNNEL_TOKEN not set; dashboard is unreachable`     | Add `TUNNEL_TOKEN` under the service's **Environment** tab. |
 | Tunnel hostname shows a Cloudflare 502 / 1033 error  | `cloudflared` isn't connected (check `[cloudflared]` lines for an invalid token), or the dashboard crashed (check `[dashboard]` lines for a Python traceback), or the tunnel's public hostname doesn't point at `http://localhost:10000`. |
+| `Invalid Host header. Dashboard requests must use the hostname the server was bound to.` | The tunnel is forwarding your public hostname as the Host header. On the tunnel's public hostname, set **HTTP Settings** → **HTTP Host Header** to `localhost`. Don't switch `HERMES_DASHBOARD_HOST` to `0.0.0.0` to get around it; that disables the check. |
 | Container OOM-killed                                 | Bump plan to `pro`. Playwright/Chromium is the usual culprit.                 |
 | `Permission denied` on `/opt/data/...`               | The disk was attached after a deploy that ran as a different UID. Restart the service; the entrypoint chowns `/opt/data` on boot when run as root. |
 | `Warning: Input is not a terminal (fd=0)` then `Goodbye!` when running `hermes` | Render's browser shell pipes stdin instead of allocating a PTY. Chat from the dashboard's **Chat** tab, or use `hermes chat -q "..."`, or `render ssh <service-id>` from a local terminal. |
