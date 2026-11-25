@@ -1,6 +1,6 @@
 # Hermes Agent on Render, pre-baked with Render tools
 
-Deploy [Hermes Agent](https://github.com/NousResearch/hermes-agent) (the self-improving AI agent from Nous Research) on Render as a single Docker web service, **already wired up to your Render account**. The image extends the upstream Hermes container with:
+Deploy [Hermes Agent](https://github.com/NousResearch/hermes-agent) (the self-improving AI agent from Nous Research) on Render as a single Docker background worker, **already wired up to your Render account**, with the dashboard reachable only through a Cloudflare Tunnel. The image extends the upstream Hermes container with:
 
 - The [Render MCP server](https://render.com/docs/mcp-server) registered in `config.yaml` at boot, so MCP tools appear as `mcp_render_list_services`, `mcp_render_get_metrics`, `mcp_render_list_logs`, etc. The agent gets the full MCP tool catalog that your API key can use.
 - The official [render-oss/skills](https://github.com/render-oss/skills) bundle (22 Render skills) pinned at a commit and exposed via `skills.external_dirs`.
@@ -8,7 +8,7 @@ Deploy [Hermes Agent](https://github.com/NousResearch/hermes-agent) (the self-im
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy-template/api/github/start?template_repo=hermes-render)
 
-The Hermes release and the skills commit are both pinned in the `Dockerfile` for reproducible deploys. All Hermes state lives on a persistent disk so upgrades stay non-destructive, and the dashboard at the service URL is the primary setup surface.
+The Hermes release and the skills commit are both pinned in the `Dockerfile` for reproducible deploys. All Hermes state lives on a persistent disk so upgrades stay non-destructive, and the dashboard (reached through the tunnel) is the primary setup surface.
 
 > **Use at your own risk:** The agent can use every Render MCP tool allowed by `RENDER_MCP_API_KEY`, including tools that mutate resources. Lock down dashboard access and use the least-privileged Render account you can.
 
@@ -16,11 +16,11 @@ The Hermes release and the skills commit are both pinned in the `Dockerfile` for
 
 ```
                             ┌──────────────────────────────────────────────┐
-                            │ Render web service (Docker, plan: standard)  │
+                            │ Render background worker (Docker, standard)  │
                             │                                              │
-   you / external clients   │  ┌────────────────────────────────────────┐  │
-   ─────────HTTPS──────────►│  │  hermes dashboard (port 10000)         │  │
-                            │  │  - /api/status (healthcheck)            │  │
+   you (Cloudflare Access)  │  ┌────────────────────────────────────────┐  │
+   ──Cloudflare Tunnel─────►│  │  hermes dashboard (127.0.0.1:10000)    │  │
+                            │  │  - reached only via cloudflared        │  │
                             │  │  - browser UI: config / keys / chat    │  │
                             │  └────────────────────────────────────────┘  │
                             │                  │                           │
@@ -34,7 +34,7 @@ The Hermes release and the skills commit are both pinned in the `Dockerfile` for
                             │                  │                           │
                             │                  ▼                           │
                             │  ┌────────────────────────────────────────┐  │
-                            │  │  /opt/data (persistent disk, 5 GB)     │  │
+                            │  │  /opt/data (persistent disk, 40 GB)    │  │
                             │  │  .env, config.yaml, sessions/,         │  │
                             │  │  skills/, memories/, logs/             │  │
                             │  └────────────────────────────────────────┘  │
@@ -104,7 +104,7 @@ You don't need any optional keys to deploy. You can fill them in via the Render 
 
 1. Click the **Deploy to Render** button above.
 2. Pick a workspace and a service name.
-3. Optionally paste your `RENDER_MCP_API_KEY` when prompted, or leave it blank and add it later from the Environment tab. The agent works without it, just without Render tools.
+3. Paste your `TUNNEL_TOKEN` when prompted (see **Set up the Cloudflare Tunnel** below). Optionally paste your `RENDER_MCP_API_KEY` too, or leave it blank and add it later from the Environment tab. The agent works without it, just without Render tools.
 4. Render reads `render.yaml`, generates a value for `HERMES_GATEWAY_TOKEN`, and creates the service. All other env vars start blank.
 5. The first deploy builds the image from the `Dockerfile`. Expect ~3 to 5 minutes for the upstream pull (~2.6 GB compressed) plus our thin Render tooling and skills layers, then ~1 minute for the gateway to boot.
 
@@ -114,19 +114,24 @@ You don't need any optional keys to deploy. You can fill them in via the Render 
 2. In the Render Dashboard, go to **Blueprints** → **New Blueprint Instance** and point at your fork.
 3. Confirm and apply.
 
-### Protect the URL before configuring
+> **Upgrading an existing deploy:** earlier versions of this Blueprint created a `web` service. Render can't change a service's type in place, so you'll need a new worker service, and it starts with a new, empty disk. Copy anything you need out of `/opt/data` first.
 
-The Hermes dashboard has no built-in authentication. Anyone who knows the service URL can read and write your API keys. Before you visit the dashboard for the first time, choose how you want to protect it:
+### Set up the Cloudflare Tunnel
 
-- Put the service behind an auth gateway that verifies a bearer token, OAuth session, or trusted identity provider.
-- Keep the dashboard reachable only through a private network path, such as Tailscale.
-- Accept the risk for a demo, use low-privilege keys, and delete the service when you're done.
+The Hermes dashboard has no built-in authentication, so this Blueprint never exposes it publicly. The service is a background worker (no `.onrender.com` URL), the dashboard binds to `127.0.0.1:10000`, and a baked-in `cloudflared` carries it out over an outbound-only tunnel. You need a domain whose DNS is on Cloudflare.
+
+1. In [Cloudflare Zero Trust](https://one.dash.cloudflare.com), go to **Networks** → **Tunnels** and create a `cloudflared` tunnel. Copy its token; this is `TUNNEL_TOKEN`. Ignore the install commands Cloudflare shows: the image already contains `cloudflared`, and the bootstrap runs it.
+2. On the tunnel, add a **public hostname** (for example `hermes.example.com`) with service `http://localhost:10000`.
+3. Under **Access** → **Applications**, add a self-hosted application for that hostname with an **Allow** policy for your own email or identity provider group. **Do not skip this.** Without it, anyone who finds the hostname can read your keys and drive the agent.
+4. Set `TUNNEL_TOKEN` in the service's **Environment** tab, if you didn't paste it during deploy.
+
+Treat the tunnel token as a secret. If it leaks, refresh it from the tunnel's page and update `TUNNEL_TOKEN`.
 
 Read the **Security** section before you paste production API keys.
 
 ## Post-deploy setup
 
-Once the service is healthy (the **Events** tab shows "Deploy live"), open the URL Render assigned (it ends in `.onrender.com`). You'll see the Hermes dashboard.
+Once the deploy is live and the logs show `[cloudflared]` lines reporting a registered tunnel connection, open your tunnel hostname. After the Cloudflare Access login, you'll see the Hermes dashboard.
 
 The Blueprint deliberately keeps the env-var surface tiny. All provider keys, tool keys, and chat platform tokens are set from the dashboard, not from `render.yaml`. The dashboard writes everything to `/opt/data/.env`, which lives on the persistent disk and survives redeploys.
 
@@ -140,7 +145,7 @@ Walk through these tabs in order:
 3. **Status**. Confirm the gateway is running and the model is reachable. The "Connected platforms" list will be empty until you add a chat platform.
 4. **API Keys** again, optionally. If you want a chat gateway, add the matching tokens: `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN`, etc. Use the **Restart gateway** button on the Status tab so the new tokens are picked up.
 
-If you'd rather set keys from the Render Dashboard's **Environment** tab (handy for CI or secrets-manager workflows), that path also works: Render env vars override `/opt/data/.env` at process start. Pick one path and stick with it to avoid drift. **The two `RENDER_*` variables are the exception** — set them from the Render **Environment** tab (not the Hermes dashboard's API Keys tab), since `config.yaml` reads `${RENDER_MCP_API_KEY}` from the gateway process environment.
+If you'd rather set keys from the Render Dashboard's **Environment** tab (handy for CI or secrets-manager workflows), that path also works: Render env vars override `/opt/data/.env` at process start. Pick one path and stick with it to avoid drift. **`RENDER_MCP_API_KEY` and `TUNNEL_TOKEN` are the exceptions.** Set them from the Render **Environment** tab, not the Hermes dashboard's API Keys tab: `config.yaml` reads `${RENDER_MCP_API_KEY}` from the gateway process environment, and `cloudflared` starts before the dashboard exists.
 
 ### Verify the Render tools are wired up
 
@@ -189,9 +194,11 @@ Costs assume Render's published prices in May 2026 and don't include data egress
 
 | Component                     | Plan                              | Cost            |
 |-------------------------------|-----------------------------------|-----------------|
-| Web service (`runtime: image`) | `standard` (2 GB / 1 CPU)         | $25/month       |
-| Persistent disk (`/opt/data`)  | 5 GB SSD                          | $1.25/month     |
-| **Subtotal (this template)**   |                                   | **$26.25/month**|
+| Background worker (Docker)     | `standard` (2 GB / 1 CPU)         | $25/month       |
+| Persistent disk (`/opt/data`)  | 40 GB SSD                         | $10/month       |
+| **Subtotal (this template)**   |                                   | **$35/month**   |
+
+Cloudflare Tunnel and Access are free for small teams (Access's free plan covers up to 50 users).
 
 If you do a lot of Playwright browsing or run several subagents in parallel, bump the plan to `pro` (4 GB / 2 CPU, $85/month). The starter plan (512 MB) cannot hold the Hermes image and is not supported.
 
@@ -204,9 +211,10 @@ Both pinned versions live in the [`Dockerfile`](Dockerfile) as build args:
 ```dockerfile
 ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v2026.5.7
 ARG RENDER_SKILLS_REF=1b8496570748203351f628b2ae738805ac2c23d5
+ARG CLOUDFLARED_VERSION=2026.10.7
 ```
 
-Bump either, commit, and push. Render won't auto-deploy (the Blueprint sets `autoDeployTrigger: off`); trigger a manual deploy from the Dashboard or the [Render CLI](https://render.com/docs/cli) on your own machine:
+Bump any of them, commit, and push. Render won't auto-deploy (the Blueprint sets `autoDeployTrigger: off`); trigger a manual deploy from the Dashboard or the [Render CLI](https://render.com/docs/cli) on your own machine:
 
 ```bash
 render deploys create <service-id>
@@ -223,6 +231,7 @@ Hermes ships fast: roughly weekly tagged releases, each with around 180 commits.
 Render keeps logs in the **Logs** tab of your service. Filter by stream:
 
 - The dashboard side-process prefixes its lines with `[dashboard]`.
+- The tunnel prefixes its lines with `[cloudflared]`.
 - Gateway and agent logs are unprefixed.
 - For deeper inspection, log files also live on disk at `/opt/data/logs/` (`agent.log`, `errors.log`, `gateway.log`).
 
@@ -251,7 +260,8 @@ Check the **Events** tab for the deploy that failed, then the **Logs** tab aroun
 | Symptom                                              | Likely cause                                                                 |
 |------------------------------------------------------|------------------------------------------------------------------------------|
 | `Refusing to start: binding to 0.0.0.0 requires API_SERVER_KEY` | You set `API_SERVER_ENABLED=true` and `API_SERVER_HOST=0.0.0.0` without an `API_SERVER_KEY`. Set the key or flip back to `127.0.0.1`. |
-| Health check fails on `/api/status`                  | `HERMES_DASHBOARD` is unset or the dashboard crashed. Check `[dashboard]` lines for a Python traceback. |
+| `TUNNEL_TOKEN not set; dashboard is unreachable`     | Add `TUNNEL_TOKEN` under the service's **Environment** tab. |
+| Tunnel hostname shows a Cloudflare 502 / 1033 error  | `cloudflared` isn't connected (check `[cloudflared]` lines for an invalid token), or the dashboard crashed (check `[dashboard]` lines for a Python traceback), or the tunnel's public hostname doesn't point at `http://localhost:10000`. |
 | Container OOM-killed                                 | Bump plan to `pro`. Playwright/Chromium is the usual culprit.                 |
 | `Permission denied` on `/opt/data/...`               | The disk was attached after a deploy that ran as a different UID. Restart the service; the entrypoint chowns `/opt/data` on boot when run as root. |
 | `Warning: Input is not a terminal (fd=0)` then `Goodbye!` when running `hermes` | Render's browser shell pipes stdin instead of allocating a PTY. Chat from the dashboard's **Chat** tab, or use `hermes chat -q "..."`, or `render ssh <service-id>` from a local terminal. |
@@ -281,7 +291,7 @@ Or restore the most recent automatic disk snapshot from the **Disks** page.
 
 There are two distinct security surfaces in this template, and they compound:
 
-1. **Dashboard auth.** Hermes' web dashboard has no authentication. Anyone who reaches the URL can read your provider keys, change configuration, and chat with the agent.
+1. **Dashboard auth.** Hermes' web dashboard has no authentication. Anyone who reaches it can read your provider keys, change configuration, and chat with the agent. This template only exposes it through a Cloudflare Tunnel, and Cloudflare Access is what keeps strangers out.
 2. **Agent capabilities.** The agent has access to a Render workspace API key via MCP. Depending on that key's role, it can restart services, change env vars, trigger deploys, and run SQL against Render Postgres.
 
 The two compose into a worst case: an unauthenticated user reaches the dashboard, chats with the agent, and asks it to "delete all services in this workspace." This template registers the full Render MCP tool catalog and **does not install the `render` CLI**. The dashboard lock is on you.
@@ -303,7 +313,7 @@ This trade-off is worth revisiting once Render adds scoped API keys. A read-only
 #### Concrete steps to harden further
 
 - **Scope the API key with a workspace member role.** Create a separate Render workspace member with the minimum role you need and use that user's API key for `RENDER_MCP_API_KEY` instead of an Owner key. The agent inherits whatever role the key grants. This is the closest thing to scoped keys available today.
-- **Lock the dashboard.** Put authentication or private-network access in front of the service. Without that, anyone reaching the URL can ask the agent to do anything within whatever caps you've set above.
+- **Lock the dashboard.** Keep a Cloudflare Access policy on the tunnel hostname. Without it, anyone reaching the hostname can ask the agent to do anything within whatever caps you've set above.
 
 The bundled `render-on-hermes` overlay skill tells the agent that MCP is already configured and that CLI installation is not an automatic fallback. But **do not rely on agent-side guardrails for safety**. An LLM cannot meaningfully self-restrict. Dashboard access control and a least-privileged API key are the real defenses.
 
@@ -311,15 +321,19 @@ The bundled `render-on-hermes` overlay skill tells the agent that MCP is already
 
 Even if the Render API key cannot mutate resources, the dashboard still leaks your LLM provider keys to whoever reaches it. Anyone who can chat with the agent can ask it to do anything the API key allows. Lock the dashboard down before pasting any keys.
 
-Two practical options.
+This template uses option A. The others remain valid if you'd rather not use Cloudflare.
 
-#### Option A: Auth gateway
+#### Option A: Cloudflare Tunnel + Access (default)
+
+The service is a background worker with no public URL, and the dashboard binds to loopback. `cloudflared` inside the container opens an outbound-only tunnel to Cloudflare, and a Cloudflare Access policy requires a login before any request reaches the dashboard. See **Set up the Cloudflare Tunnel** for the steps.
+
+#### Option B: Auth gateway
 
 Expose a small authenticated Web Service in front of Hermes and keep Hermes itself private. The gateway verifies a bearer token, OAuth session, or identity-provider token, then forwards approved traffic to Hermes over Render's private network.
 
 This is the most portable option because it does not depend on static client IPs.
 
-#### Option B: Tailscale
+#### Option C: Tailscale
 
 Skip the public internet entirely. Run Tailscale on a sidecar (or use Render's [Tailscale template](https://render.com/docs/deploy-tailscale-derp)) and reach the dashboard only from devices on your Tailnet. This takes more setup, but it avoids IP rotation pain and works from anywhere.
 
@@ -338,13 +352,13 @@ What it does:
 - Mounts a persistent disk at the upstream-default `HERMES_HOME` path.
 - Bakes the official Render skill bundle into the image, plus a small `render-on-hermes` overlay skill that tells the agent how to behave on this host.
 - Idempotently patches `config.yaml` on each boot to register the Render MCP server with the full MCP tool catalog available to your API key, without overwriting your edits.
-- Generates a `HERMES_GATEWAY_TOKEN` and marks `RENDER_MCP_API_KEY` as `sync: false` so secrets never sync from the repo.
-- Sets a healthcheck that probes the dashboard.
+- Generates a `HERMES_GATEWAY_TOKEN` and marks `RENDER_MCP_API_KEY` and `TUNNEL_TOKEN` as `sync: false` so secrets never sync from the repo.
+- Ships a pinned `cloudflared` and starts it on boot when `TUNNEL_TOKEN` is set, with the dashboard bound to loopback and no public Render URL.
 
 What it deliberately doesn't do:
 
 - **It doesn't install the `render` CLI.** MCP is the supported in-container Render integration. Install the CLI only as a deliberate operator choice.
-- It doesn't try to add authentication on top of the dashboard. Use an auth gateway, private network path, or another access-control layer you trust.
+- It doesn't add authentication inside the dashboard itself. Login is enforced by the Cloudflare Access policy you configure on the tunnel hostname.
 - It doesn't enable the OpenAI-compatible API server. Flip `API_SERVER_ENABLED=true` and supply `API_SERVER_KEY` if you need it.
 - It doesn't ship a default model. Hermes' upstream default is set in `config.yaml`, which lives on disk and is owner-configurable from the dashboard.
 - It doesn't configure browser automation tweaks (`--shm-size`, GPU access). Those need an instance type with more RAM, not extra Render config.
