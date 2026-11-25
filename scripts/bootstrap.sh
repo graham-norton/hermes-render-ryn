@@ -38,6 +38,18 @@ else
   echo "[render-tools] warning: ${PATCHER} not found or not executable; skipping" >&2
 fi
 
+# Start the Cloudflare Tunnel in the background when a token is set.
+# cloudflared reads TUNNEL_TOKEN from the environment, which keeps the
+# token out of the process list. The tunnel's public hostname and its
+# origin (http://localhost:10000) are configured in Cloudflare Zero Trust.
+if [ -n "${TUNNEL_TOKEN:-}" ]; then
+  echo "[render-tools] starting cloudflared tunnel (background)"
+  gosu hermes cloudflared tunnel --no-autoupdate run 2>&1 \
+    | sed -u 's/^/[cloudflared] /' &
+else
+  echo "[render-tools] warning: TUNNEL_TOKEN not set; dashboard is unreachable" >&2
+fi
+
 # Hand off to the upstream entrypoint. The upstream script handles
 # privilege drop, dashboard backgrounding, and the actual gateway exec.
 exec /opt/hermes/docker/entrypoint.sh "$@"

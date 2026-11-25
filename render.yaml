@@ -3,22 +3,25 @@
 # Hermes Agent on Render, pre-baked with Render tools.
 # https://github.com/NousResearch/hermes-agent
 #
-# Single web service built from the local Dockerfile, which extends the
+# Single background worker built from the local Dockerfile, which extends the
 # upstream Hermes image with:
 #   - The official render-oss/skills bundle, pinned at a commit
 #   - The Render MCP server pre-registered in config.yaml at boot
 #     with the full MCP tool catalog available to the provided API key
+#   - cloudflared, which exposes the dashboard through a Cloudflare Tunnel
 #
 # Inside the container the gateway runs in the foreground and the
 # dashboard runs as a background side-process (HERMES_DASHBOARD=1).
-# Render's public URL serves the dashboard on port 10000; persistent
-# state lives on a 5 GB disk mounted at /opt/data (HERMES_HOME default).
+# The dashboard listens on 127.0.0.1:10000 only and is reached through a
+# Cloudflare Tunnel (protect its hostname with a Cloudflare Access policy).
+# As a worker the service has no public .onrender.com URL. Persistent
+# state lives on a 40 GB disk mounted at /opt/data (HERMES_HOME default).
 #
 # To upgrade Hermes: bump HERMES_IMAGE in the Dockerfile and redeploy.
 # To upgrade Render skills: bump RENDER_SKILLS_REF and redeploy.
 
 services:
-  - type: web
+  - type: worker
     name: hermes
     runtime: docker
     region: oregon
@@ -29,7 +32,6 @@ services:
     # no `dockerCommand` override is needed here.
     dockerfilePath: ./Dockerfile
     autoDeployTrigger: off
-    healthCheckPath: /api/status
 
     disk:
       name: hermes-data
@@ -44,12 +46,12 @@ services:
 
       # Dashboard side-process. The entrypoint backgrounds `hermes dashboard`
       # before exec'ing `gateway run` whenever HERMES_DASHBOARD is truthy.
-      # HERMES_DASHBOARD_HOST=0.0.0.0 makes the entrypoint pass --insecure
-      # so the dashboard accepts non-loopback binds.
+      # The upstream default host is 0.0.0.0; loopback keeps the dashboard
+      # reachable only by cloudflared inside the container.
       - key: HERMES_DASHBOARD
         value: "1"
       - key: HERMES_DASHBOARD_HOST
-        value: "0.0.0.0"
+        value: "127.0.0.1"
       - key: HERMES_DASHBOARD_PORT
         value: "10000"
       # Exposes a Chat tab in the dashboard that embeds the full Hermes TUI
@@ -75,4 +77,9 @@ services:
       # `render` CLI. This is the same kind of Render API key; the Render
       # account role behind the key determines what the agent can do.
       - key: RENDER_MCP_API_KEY
+        sync: false
+
+      # Cloudflare Tunnel token from Zero Trust > Networks > Tunnels.
+      # The bootstrap starts cloudflared only when this is set.
+      - key: TUNNEL_TOKEN
         sync: false

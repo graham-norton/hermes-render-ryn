@@ -54,6 +54,15 @@ RUN set -eu; \
 # overlays would shadow upstream entries.
 COPY --chown=hermes:hermes skills/ /opt/render-tools/skills-local/
 
+# Cloudflare Tunnel connector. The dashboard binds to loopback only and
+# cloudflared carries it out over an outbound-only tunnel, so the service
+# needs no public port. Pinned for reproducible deploys; bump to upgrade.
+ARG CLOUDFLARED_VERSION=2026.10.7
+RUN curl -fsSL --retry 3 -o /usr/local/bin/cloudflared \
+      "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
+ && chmod 0755 /usr/local/bin/cloudflared \
+ && cloudflared --version
+
 # Boot-time wrapper: patches /opt/data/config.yaml, then hands off to
 # the upstream entrypoint chain (tini → docker/entrypoint.sh).
 COPY --chown=root:root scripts/bootstrap.sh /opt/render-tools/bootstrap.sh
